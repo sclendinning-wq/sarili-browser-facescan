@@ -293,8 +293,12 @@
 
   const DEBUG = new URLSearchParams(location.search).get("debug") === "true";
 
-  // ---- Constants from brief ----
-  const KNOWN_FACE_WIDTH_MM = 140;     // population average adult face width
+  // ---- Constants ----
+  // Scale reference: human horizontal visible iris diameter (HVID) is ~11.7mm and
+  // remarkably constant across adults (~±0.5mm), independent of camera distance.
+  // Using it as the real-world ruler makes face width an actual measurement rather
+  // than a value fixed by assumption (the old 140mm face-width method was circular).
+  const IRIS_DIAMETER_MM = 11.7;
   const BRIDGE_HEIGHT_OFFSET = 3.0;    // frames sit proud of skin
   const FRAMES_PER_STEP = 30;
   const BBOX_TOLERANCE = 0.15;         // discard if bbox area deviates >15% from median
@@ -306,6 +310,13 @@
     leftIris: 468, rightIris: 473,
     leftInnerEye: 133, rightInnerEye: 362,
     noseTip: 4,
+  };
+
+  // Iris ring landmarks (require refineLandmarks). Each eye: center + 4 ring points
+  // ordered so the [0] and [2] entries are the horizontal extremes of the iris.
+  const IRIS_RING = {
+    left:  [469, 470, 471, 472],   // around center 468; 469 & 471 horizontal
+    right: [474, 475, 476, 477],   // around center 473; 474 & 476 horizontal
   };
 
   // ---- DOM ----
@@ -371,17 +382,35 @@
     return Math.min(dl, dr) / denom; // 1.0 frontal, →0 strong turn
   }
 
+  // Horizontal iris diameter in pixels, averaged across both eyes.
+  // Falls back to a single eye if one set of ring landmarks is missing.
+  function irisDiameterPx(landmarks, w, h) {
+    const p = (i) => toPx(landmarks[i], w, h);
+    const diam = (ring) => {
+      if (!landmarks[ring[0]] || !landmarks[ring[2]]) return null;
+      return dist(p(ring[0]), p(ring[2])); // horizontal extremes
+    };
+    const dl = diam(IRIS_RING.left);
+    const dr = diam(IRIS_RING.right);
+    const vals = [dl, dr].filter((v) => v && v > 0);
+    if (!vals.length) return null;
+    return vals.reduce((s, v) => s + v, 0) / vals.length;
+  }
+
   // ---- Per-frame raw measurement (pixel + mm) ----
   function measureFrame(landmarks, w, h) {
     const p = (i) => toPx(landmarks[i], w, h);
+
+    // Scale comes from the iris, not the face width.
+    const irisPx = irisDiameterPx(landmarks, w, h);
+    if (!irisPx || irisPx <= 0) return null;
+    const scale = IRIS_DIAMETER_MM / irisPx; // mm per px
 
     const lTemple = p(LM.leftTemple), rTemple = p(LM.rightTemple);
     const faceWidthPx = dist(lTemple, rTemple);
     if (faceWidthPx <= 0) return null;
 
-    const scale = KNOWN_FACE_WIDTH_MM / faceWidthPx; // mm per px
-
-    const faceWidthMm = faceWidthPx * scale; // == 140 by definition; kept for averaging clarity
+    const faceWidthMm = faceWidthPx * scale; // now a real, person-specific measurement
 
     const lIris = p(LM.leftIris), rIris = p(LM.rightIris);
     const pdMm = dist(lIris, rIris) * scale;
@@ -473,8 +502,9 @@
 
   // ---- Frame validity (range gate) ----
   function inRange(meas) {
-    // face width is normalised to 140 by construction; gate on raw px-derived sanity instead:
-    // reject implausible PD / bridge that signal a bad detection.
+    // Brief: discard frame as invalid if face width is out of plausible range.
+    if (meas.faceWidthMm < 100 || meas.faceWidthMm > 200) return false;
+    // Additional sanity gates that signal a bad detection.
     if (meas.pdMm < 40 || meas.pdMm > 90) return false;
     if (meas.bridgeWidthMm < 8 || meas.bridgeWidthMm > 40) return false;
     return true;
@@ -568,9 +598,11 @@
     debugBox.textContent =
 `step: ${STEPS[state.stepIndex].key}  phase: ${state.phase}
 turnRatio: ${fmt(turnRatio(landmarks, w))}
+irisDiameterPx: ${fmt(irisDiameterPx(landmarks, w, h))}
 scale (mm/px): ${meas.scale.toFixed(4)}
 faceWidthPx: ${fmt(meas.faceWidthPx)}
 --- live mm ---
+  face width:    ${fmt(meas.faceWidthMm)}
   PD:            ${fmt(meas.pdMm)}
   bridge width:  ${fmt(meas.bridgeWidthMm)}
   bridge height: ${fmt(meas.bridgeHeightMm)}

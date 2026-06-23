@@ -29,9 +29,11 @@ frame/discard counts, and the scale factor.
 | Bridge width  | inner eye corners 133 ↔ 362        |
 | Bridge height | nose tip 4 → midpoint of 133/362 (Y only, +3mm offset) |
 
-Scale is derived from an assumed 140mm average face width (no physical
-reference object). See the technical brief for the full algorithm and the known
-limitations of the focal-length calibration method.
+Scale is derived from the user's own iris: the horizontal visible iris diameter
+is ~11.7mm and near-constant across adults, so it acts as a props-free real-world
+ruler (`scale = 11.7mm / iris_diameter_px`). This makes face width a genuine
+per-person measurement rather than a value fixed by assumption. Requires
+`refineLandmarks: true` for the iris ring landmarks.
 
 ## Scope
 
