@@ -312,11 +312,11 @@
     noseTip: 4,
   };
 
-  // Iris ring landmarks (require refineLandmarks). Each eye: center + 4 ring points
-  // ordered so the [0] and [2] entries are the horizontal extremes of the iris.
-  const IRIS_RING = {
-    left:  [469, 470, 471, 472],   // around center 468; 469 & 471 horizontal
-    right: [474, 475, 476, 477],   // around center 473; 474 & 476 horizontal
+  // Iris landmarks (require refineLandmarks). Each iris is a center + 4 ring points.
+  // Left iris:  468 center, 469-472 ring.  Right iris: 473 center, 474-477 ring.
+  const IRIS = {
+    left:  { center: 468, ring: [469, 470, 471, 472] },
+    right: { center: 473, ring: [474, 475, 476, 477] },
   };
 
   // ---- DOM ----
@@ -382,16 +382,29 @@
     return Math.min(dl, dr) / denom; // 1.0 frontal, →0 strong turn
   }
 
-  // Horizontal iris diameter in pixels, averaged across both eyes.
-  // Falls back to a single eye if one set of ring landmarks is missing.
+  // Diameter of one iris circle in pixels: 2x the mean radius from the iris
+  // center to its 4 ring points. Using the whole ring is more robust to head
+  // tilt and per-landmark jitter than a single horizontal chord.
+  function singleIrisDiameterPx(landmarks, eye, w, h) {
+    const c = landmarks[eye.center];
+    if (!c) return null;
+    const center = toPx(c, w, h);
+    let sum = 0, n = 0;
+    for (const idx of eye.ring) {
+      const lm = landmarks[idx];
+      if (!lm) continue;
+      sum += dist(center, toPx(lm, w, h));
+      n++;
+    }
+    if (!n) return null;
+    return 2 * (sum / n); // diameter = 2 * mean radius
+  }
+
+  // Iris diameter in pixels, averaged across both eyes.
+  // Falls back to a single eye if one iris's landmarks are missing.
   function irisDiameterPx(landmarks, w, h) {
-    const p = (i) => toPx(landmarks[i], w, h);
-    const diam = (ring) => {
-      if (!landmarks[ring[0]] || !landmarks[ring[2]]) return null;
-      return dist(p(ring[0]), p(ring[2])); // horizontal extremes
-    };
-    const dl = diam(IRIS_RING.left);
-    const dr = diam(IRIS_RING.right);
+    const dl = singleIrisDiameterPx(landmarks, IRIS.left, w, h);
+    const dr = singleIrisDiameterPx(landmarks, IRIS.right, w, h);
     const vals = [dl, dr].filter((v) => v && v > 0);
     if (!vals.length) return null;
     return vals.reduce((s, v) => s + v, 0) / vals.length;
